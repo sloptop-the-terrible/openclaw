@@ -9,6 +9,7 @@ import {
 } from "./crabline-artifacts.js";
 import { buildQaSuiteEvidenceSummary, QA_EVIDENCE_FILENAME } from "./evidence-summary.js";
 import type { QaProviderMode } from "./model-selection.js";
+import type { QaTransportDriver } from "./qa-transport-registry.js";
 import type { QaTransportAdapter } from "./qa-transport.js";
 import { renderQaMarkdownReport, type QaReportScenario } from "./report.js";
 import type { RuntimeId } from "./runtime-parity.js";
@@ -35,7 +36,8 @@ export type QaSuiteSummaryJsonParams = {
   alternateModel: string;
   fastMode: boolean;
   concurrency: number;
-  channelDriver?: QaScorecardChannelDriver | null;
+  channel?: string | null;
+  channelDriver?: QaTransportDriver | null;
   channelDriverSelection?: QaSuiteChannelDriverSelection | null;
   scenarioIds?: readonly string[];
   runtimePair?: [RuntimeId, RuntimeId];
@@ -94,8 +96,8 @@ export function buildQaSuiteSummaryJson(params: QaSuiteSummaryJsonParams): QaSui
       alternateModelName: alternateSplit?.model ?? null,
       fastMode: params.fastMode,
       concurrency: params.concurrency,
-      channelDriver: params.channelDriver ?? params.channelDriverSelection?.channelDriver ?? null,
-      channel: params.channelDriverSelection?.channel ?? null,
+      channelDriver: params.channelDriver ?? null,
+      channel: params.channel ?? null,
       channelCapabilityMatrixPath: params.channelDriverSelection?.capabilityMatrixPath ?? null,
       channelDriverSmokePath: params.channelDriverSelection?.smokeArtifactPath ?? null,
       scenarioIds:
@@ -115,6 +117,8 @@ export async function writeQaSuiteArtifacts(params: {
   evidenceMode?: QaScorecardEvidenceMode;
   metrics?: QaSuiteSummaryJson["metrics"];
   transport: QaTransportAdapter;
+  channelId: string;
+  channelDriver: QaTransportDriver;
   // Reuse the canonical QaProviderMode union instead of re-declaring it
   // inline. Loop 6 already unified `QaSuiteSummaryJsonParams.providerMode`
   // on this type; keeping the writer in sync prevents drift when model-
@@ -124,7 +128,7 @@ export async function writeQaSuiteArtifacts(params: {
   alternateModel: string;
   fastMode: boolean;
   concurrency: number;
-  channelDriver?: QaScorecardChannelDriver | null;
+  requestedChannelDriver?: QaScorecardChannelDriver | null;
   channelDriverSelection?: OpenClawCrablineChannelDriverSelection | null;
   isolatedWorkers?: boolean;
   scenarioIds?: readonly string[];
@@ -204,8 +208,14 @@ export async function writeQaSuiteArtifacts(params: {
               : []),
           ],
           evidenceMode: params.evidenceMode,
-          channelId: params.channelDriverSelection?.channel ?? params.transport.id,
-          channelDriver: params.channelDriver ?? params.channelDriverSelection?.channelDriver,
+          channel: {
+            id: params.channelId,
+            driver: params.channelDriver,
+            requestedDriver:
+              params.requestedChannelDriver === params.channelDriver
+                ? undefined
+                : (params.requestedChannelDriver ?? undefined),
+          },
           env: process.env,
           generatedAt: params.finishedAt.toISOString(),
           primaryModel: params.primaryModel,
@@ -269,6 +279,7 @@ export async function writeQaSuiteArtifacts(params: {
     `${JSON.stringify(
       buildQaSuiteSummaryJson({
         ...params,
+        channel: params.channelId,
         channelDriverSelection: effectiveChannelDriverSelection,
       }),
       null,

@@ -21,6 +21,7 @@ import type { QaThinkingLevel } from "./qa-gateway-config.js";
 import {
   createQaTransportAdapter,
   type QaTransportAdapterFactory,
+  type QaTransportDriver,
   type QaTransportFactoryContext,
   type QaTransportId,
 } from "./qa-transport-registry.js";
@@ -86,6 +87,7 @@ export async function createQaSuiteTransportAdapter(params: {
   channelId?: string;
   channelDriverSelection?: OpenClawCrablineChannelDriverSelection | null;
   cleanupOnFailure?: () => Promise<void>;
+  onTransportCreated?: (channelDriver: QaTransportDriver) => void;
   outputDir: string;
   transportPolicy?: NonNullable<QaSuiteRunParams["adapterOptions"]>["transportPolicy"];
   state: QaLabServerHandle["state"];
@@ -96,14 +98,17 @@ export async function createQaSuiteTransportAdapter(params: {
       params.channelDriver === "live" &&
       params.channelId !== undefined &&
       params.adapterFactories !== undefined;
-    return await createQaTransportAdapter(
+    const channelId =
+      params.channelId ?? params.channelDriverSelection?.channel ?? params.transportId;
+    const channelDriver: QaTransportDriver = usesLiveAdapter
+      ? "live"
+      : params.channelDriverSelection
+        ? "crabline"
+        : params.transportId;
+    const transportFactoryResult = await createQaTransportAdapter(
       {
-        channelId: params.channelId ?? params.channelDriverSelection?.channel ?? params.transportId,
-        driver: usesLiveAdapter
-          ? "live"
-          : params.channelDriverSelection
-            ? "crabline"
-            : params.transportId,
+        channelId,
+        driver: channelDriver,
         outputDir: params.outputDir,
         adapterOptions: {
           ...params.adapterOptions,
@@ -120,6 +125,8 @@ export async function createQaSuiteTransportAdapter(params: {
       },
       usesLiveAdapter ? params.adapterFactories : undefined,
     );
+    params.onTransportCreated?.(channelDriver);
+    return { ...transportFactoryResult, channelDriver };
   } catch (error) {
     await params.cleanupOnFailure?.().catch(() => undefined);
     throw error;
@@ -155,6 +162,7 @@ export type QaSuiteRunParams = {
   forcedRuntime?: RuntimeId;
   runtimePair?: [RuntimeId, RuntimeId];
   captureRuntimeParityCell?: boolean;
+  onTransportCreated?: (channelDriver: QaTransportDriver) => void;
   roundTripProbe?: QaSuiteRoundTripProbe;
   // Profile runs prove every applicable declared channel. Direct channel lanes
   // still treat execution.channels as an OR eligibility list.

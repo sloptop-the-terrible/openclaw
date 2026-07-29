@@ -127,7 +127,10 @@ describe("qa suite", () => {
         state: {} as QaLabServerHandle["state"],
         transportId: "qa-channel",
       }),
-    ).resolves.toMatchObject({ adapter: { id: "qa-channel" } });
+    ).resolves.toMatchObject({
+      adapter: { id: "qa-channel" },
+      channelDriver: "qa-channel",
+    });
 
     expect(create).not.toHaveBeenCalled();
   });
@@ -187,7 +190,10 @@ describe("qa suite", () => {
         state: {} as QaLabServerHandle["state"],
         transportId: "qa-channel",
       }),
-    ).resolves.toMatchObject({ adapter });
+    ).resolves.toMatchObject({
+      adapter,
+      channelDriver: "live",
+    });
 
     expect(create).toHaveBeenCalledTimes(1);
     expect(create).toHaveBeenCalledWith(
@@ -509,6 +515,8 @@ describe("qa suite", () => {
           id: "qa-channel",
           createReportNotes: () => [],
         } as unknown as QaTransportAdapter,
+        channelId: "qa-channel",
+        channelDriver: "qa-channel",
         providerMode: "mock-openai",
         primaryModel: "mock-openai/gpt-5.6-luna",
         alternateModel: "mock-openai/gpt-5.6-luna-alt",
@@ -545,6 +553,8 @@ describe("qa suite", () => {
           id: "qa-channel",
           createReportNotes: () => [],
         } as unknown as QaTransportAdapter,
+        channelId: "qa-channel",
+        channelDriver: "qa-channel",
         providerMode: "mock-openai",
         primaryModel: "mock-openai/gpt-5.6-luna",
         alternateModel: "mock-openai/gpt-5.6-luna-alt",
@@ -605,6 +615,8 @@ describe("qa suite", () => {
           id: "qa-channel",
           createReportNotes: () => [],
         } as unknown as QaTransportAdapter,
+        channelId: "telegram",
+        channelDriver: "crabline",
         providerMode: "mock-openai",
         primaryModel: "mock-openai/gpt-5.6-luna",
         alternateModel: "mock-openai/gpt-5.6-luna-alt",
@@ -709,6 +721,8 @@ describe("qa suite", () => {
         id: "qa-channel",
         createReportNotes: () => [],
       } as unknown as QaTransportAdapter,
+      channelId: "telegram",
+      channelDriver: "crabline",
       providerMode: "mock-openai",
       primaryModel: "mock-openai/gpt-5.6-luna",
       alternateModel: "mock-openai/gpt-5.6-luna-alt",

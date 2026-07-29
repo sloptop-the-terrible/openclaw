@@ -3,8 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QaSuiteInfraError } from "./errors.js";
+import { buildQaSuiteEvidenceSummary } from "./evidence-summary.js";
 import type { QaLabServerHandle } from "./lab-server.types.js";
-import type { QaSuiteScenarioResult } from "./suite.js";
+import type { QaSuiteRunParams, QaSuiteScenarioResult } from "./suite.js";
 import type {
   QaTestFileScenario,
   QaTestFileScenarioRunResult,
@@ -78,6 +79,14 @@ function trackMaxActiveFlowRuns() {
   return () => maxActive;
 }
 
+function selectMockChannelDriver(params: QaSuiteRunParams | undefined) {
+  return params?.channelDriver === "live" && params.channelId
+    ? ("live" as const)
+    : params?.channelDriverSelection
+      ? ("crabline" as const)
+      : ("qa-channel" as const);
+}
+
 function mockFlowPartitionFailures(failuresByScenarioId: ReadonlyMap<string, readonly Error[]>) {
   const run = runQaFlowSuite.getMockImplementation();
   if (!run) {
@@ -93,6 +102,7 @@ function mockFlowPartitionFailures(failuresByScenarioId: ReadonlyMap<string, rea
     attempts.set(scenarioId, attempt);
     const failure = failuresByScenarioId.get(scenarioId)?.[attempt - 1];
     if (failure) {
+      params?.onTransportCreated?.(selectMockChannelDriver(params));
       throw failure;
     }
     return await run(params);
@@ -104,32 +114,28 @@ describe("qa suite runtime launcher", () => {
   beforeEach(() => {
     runQaFlowSuite.mockReset();
     runQaTestFileScenarios.mockReset();
-    runQaFlowSuite.mockImplementation(
-      async (
-        params:
-          | { outputDir?: string; scenarioIds?: string[]; writeEvidenceFile?: boolean }
-          | undefined,
-      ) => {
-        const outputDir = params?.outputDir ?? "/tmp/qa-flow";
-        const evidencePath = path.join(outputDir, "qa-evidence.json");
-        const evidence = await writeEvidence(evidencePath, params?.writeEvidenceFile);
-        const scenarioIds = params?.scenarioIds ?? ["channel-chat-baseline"];
-        return {
-          evidence,
-          outputDir,
-          evidencePath,
-          reportPath: path.join(outputDir, "qa-suite-report.md"),
-          summaryPath: path.join(outputDir, "qa-suite-summary.json"),
-          report: "# QA Suite Report\n",
-          scenarios: scenarioIds.map((scenarioId) => ({
-            name: scenarioId,
-            status: "pass",
-            steps: [],
-          })),
-          watchUrl: "http://127.0.0.1:43124",
-        };
-      },
-    );
+    runQaFlowSuite.mockImplementation(async (params: QaSuiteRunParams | undefined) => {
+      const outputDir = params?.outputDir ?? "/tmp/qa-flow";
+      const evidencePath = path.join(outputDir, "qa-evidence.json");
+      const evidence = await writeEvidence(evidencePath, params?.writeEvidenceFile);
+      const scenarioIds = params?.scenarioIds ?? ["channel-chat-baseline"];
+      const channelDriver = selectMockChannelDriver(params);
+      params?.onTransportCreated?.(channelDriver);
+      return {
+        evidence,
+        outputDir,
+        evidencePath,
+        reportPath: path.join(outputDir, "qa-suite-report.md"),
+        summaryPath: path.join(outputDir, "qa-suite-summary.json"),
+        report: "# QA Suite Report\n",
+        scenarios: scenarioIds.map((scenarioId) => ({
+          name: scenarioId,
+          status: "pass",
+          steps: [],
+        })),
+        watchUrl: "http://127.0.0.1:43124",
+      };
+    });
     runQaTestFileScenarios.mockImplementation(
       async (params: {
         outputDir: string;
@@ -262,6 +268,10 @@ describe("qa suite runtime launcher", () => {
         scenarioIds: ["matrix-allowlist-hot-reload"],
       }),
     );
+    const summary = JSON.parse(
+      await fs.readFile(path.join(outputDir, "qa-suite-summary.json"), "utf8"),
+    ) as { run?: { channel?: unknown; channelDriver?: unknown } };
+    expect(summary.run).toMatchObject({ channel: "qa-channel", channelDriver: "qa-channel" });
     expect(runQaTestFileScenarios).not.toHaveBeenCalled();
   });
 
@@ -392,6 +402,82 @@ describe("qa suite runtime launcher", () => {
     ).toMatchObject({ status: "fail" });
   });
 
+  it("keeps mixed channel drivers identical in the summary and standalone evidence", async () => {
+    const repoRoot = await makeTempRepo("qa-suite-mixed-channel-drivers-");
+    const runFlow = runQaFlowSuite.getMockImplementation();
+    if (!runFlow) {
+      throw new Error("expected default QA flow suite mock implementation");
+    }
+    const channelByScenarioId = {
+      "channel-chat-baseline": "qa-channel",
+      "telegram-help-command": "telegram",
+      "matrix-restart-resume": "matrix",
+    } as const;
+    const channelDriverByScenarioId = {
+      "channel-chat-baseline": "qa-channel",
+      "telegram-help-command": "live",
+      "matrix-restart-resume": "crabline",
+    } as const;
+    runQaFlowSuite.mockImplementation(async (params) => {
+      const scenarioId = params?.scenarioIds?.[0];
+      if (!scenarioId || !(scenarioId in channelDriverByScenarioId)) {
+        throw new Error("expected one mixed-driver flow scenario");
+      }
+      const channelId = channelByScenarioId[scenarioId as keyof typeof channelByScenarioId];
+      const channelDriver =
+        channelDriverByScenarioId[scenarioId as keyof typeof channelDriverByScenarioId];
+      return {
+        ...(await runFlow(params)),
+        evidence: buildQaSuiteEvidenceSummary({
+          artifactPaths: [],
+          channel: {
+            id: channelId,
+            driver: channelDriver,
+            requestedDriver: "live",
+          },
+          generatedAt: "2026-07-29T00:00:00.000Z",
+          primaryModel: "mock-openai/gpt-5.6-luna",
+          providerMode: "mock-openai",
+          scenarioDefinitions: [{ id: scenarioId, title: scenarioId }],
+          scenarioResults: [{ name: scenarioId, status: "pass" }],
+        }),
+      };
+    });
+
+    const result = await runQaSuite({
+      repoRoot,
+      channelDriver: "live",
+      adapterFactories: [
+        {
+          id: "mixed-proof-driver",
+          matches: () => true,
+          create: vi.fn(),
+        },
+      ],
+      scenarioIds: ["channel-chat-baseline", "telegram-help-command", "matrix-restart-resume"],
+    });
+
+    if (result.executionKind !== "suite") {
+      throw new Error("expected unified suite result");
+    }
+    const evidence = JSON.parse(await fs.readFile(result.result.evidencePath, "utf8")) as {
+      entries: Array<{ execution: { channel: { driver?: string; id: string; live?: boolean } } }>;
+    };
+    const summary = JSON.parse(await fs.readFile(result.result.summaryPath, "utf8")) as {
+      evidence?: unknown;
+      run?: { channel?: unknown; channelDriver?: unknown };
+    };
+    expect(summary.evidence).toEqual(evidence);
+    expect(evidence.entries.map(({ execution }) => execution.channel)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "qa-channel", driver: "qa-channel", live: false }),
+        expect.objectContaining({ id: "telegram", driver: "live", live: true }),
+        expect.objectContaining({ id: "matrix", driver: "crabline", live: false }),
+      ]),
+    );
+    expect(summary.run).toMatchObject({ channelDriver: null, channel: null });
+  });
+
   it("uses one eligible channel outside profile execution", async () => {
     const repoRoot = await makeTempRepo("qa-suite-portable-channel-");
 
@@ -504,6 +590,7 @@ describe("qa suite runtime launcher", () => {
     expect(summary.counts).toMatchObject({ total: 2, passed: 1, failed: 1 });
     const evidence = JSON.parse(await fs.readFile(result.result.evidencePath, "utf8")) as {
       entries: Array<{
+        execution: { channel: Record<string, unknown> };
         test: { id: string };
         result: { status: string; failure?: { reason: string } };
       }>;
@@ -522,6 +609,10 @@ describe("qa suite runtime launcher", () => {
         }),
       ]),
     );
+    expect(
+      evidence.entries.find((entry) => entry.test.id === "whatsapp-status-command")?.execution
+        .channel,
+    ).toEqual({ id: "whatsapp", driver: "live", live: true });
     await expect(fs.access(result.result.reportPath)).resolves.toBeUndefined();
   });
 
@@ -834,8 +925,10 @@ describe("qa suite runtime launcher", () => {
             },
             channel: {
               id: params?.channelDriverSelection?.channel ?? "qa-channel",
+
               live: false,
               driver: "crabline",
+              requestedDriver: "crabline",
             },
             packageSource: {
               kind: "source-checkout",
@@ -891,7 +984,7 @@ describe("qa suite runtime launcher", () => {
     const summary = JSON.parse(
       await fs.readFile(path.join(outputDir, "qa-suite-summary.json"), "utf8"),
     ) as { run?: { channel?: unknown; channelDriver?: unknown; scenarioIds?: unknown } };
-    expect(summary.run?.channelDriver).toBe("crabline");
+    expect(summary.run?.channelDriver).toBeNull();
     expect(summary.run?.channel).toBeNull();
     expect(summary.run?.scenarioIds).toEqual(["telegram-help-command", "matrix-restart-resume"]);
     const evidence = JSON.parse(
@@ -2203,7 +2296,7 @@ describe("qa suite runtime launcher", () => {
     ]);
     const evidence = JSON.parse(await fs.readFile(result.result.evidencePath, "utf8")) as {
       entries?: Array<{
-        execution?: { channel?: { id?: string } };
+        execution?: { channel?: Record<string, unknown> };
         result?: { status?: string };
         test?: { id?: string };
       }>;
@@ -2211,8 +2304,12 @@ describe("qa suite runtime launcher", () => {
     for (const scenarioId of ["whatsapp-status-command", "whatsapp-access-control-dm-open"]) {
       const blocked = evidence.entries?.find((entry) => entry.test?.id === scenarioId);
       expect(blocked).toMatchObject({
-        execution: { channel: { id: "whatsapp", driver: "live", live: true } },
         result: { status: "blocked" },
+      });
+      expect(blocked?.execution?.channel).toEqual({
+        id: "whatsapp",
+        live: false,
+        requestedDriver: "live",
       });
     }
   });
