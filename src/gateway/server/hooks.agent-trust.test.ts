@@ -39,7 +39,8 @@ vi.mock("../../infra/heartbeat-wake.js", () => ({
 vi.mock("../../cron/isolated-agent.js", () => ({
   runCronIsolatedAgentTurn: runCronIsolatedAgentTurnMock,
 }));
-vi.mock("../../config/sessions.js", () => ({
+vi.mock("../../config/sessions.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../config/sessions.js")>()),
   resolveMainSessionKeyFromConfig: resolveMainSessionKeyMock,
   resolveMainSessionKey: vi.fn(
     (cfg?: { session?: { mainKey?: string } }) => `agent:main:${cfg?.session?.mainKey ?? "main"}`,
