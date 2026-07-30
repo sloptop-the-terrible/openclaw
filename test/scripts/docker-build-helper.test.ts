@@ -4387,6 +4387,7 @@ heartbeat_elapsed="\${BASH_REMATCH[1]}"
     ).toHaveLength(1);
     expect(scenario.match(/export HOME="\$account_home"/gu)).toHaveLength(1);
     expect(scenario.match(/export USERPROFILE="\$account_home"/gu)).toHaveLength(1);
+    expect(scenario.match(/^\s*use_default_service_identity\s*$/gmu)).toHaveLength(3);
 
     expect(scenario).not.toMatch(/^\s*if ! timeout "\$command_timeout"/mu);
   });

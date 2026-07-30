@@ -125,6 +125,15 @@ assert_no_env_key() {
   fi
 }
 
+use_default_service_identity() {
+  local account_home
+  account_home="$(getent passwd "$(id -u)" | cut -d: -f6)"
+  test -n "$account_home"
+  export HOME="$account_home"
+  export USERPROFILE="$account_home"
+  unset OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH
+}
+
 # Each flow: install service with one variant, run doctor from the other,
 # and verify ExecStart entrypoint switches accordingly.
 run_flow() {
@@ -139,11 +148,7 @@ run_flow() {
 
   echo "== Flow: $name =="
   openclaw_test_state_create "switch-${name}" empty
-  account_home="$(getent passwd "$(id -u)" | cut -d: -f6)"
-  test -n "$account_home"
-  export HOME="$account_home"
-  export USERPROFILE="$account_home"
-  unset OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH
+  use_default_service_identity
   export USER="testuser"
 
   if ! openclaw_e2e_maybe_timeout "$command_timeout" bash -c "$install_cmd" >"$install_log" 2>&1; then
@@ -268,6 +273,7 @@ run_proxy_env_flow() {
 
   echo "== Flow: $name =="
   openclaw_test_state_create "switch-${name}" empty
+  use_default_service_identity
   export USER="testuser"
 
   unit_path="$HOME/.config/systemd/user/openclaw-gateway.service"
@@ -314,6 +320,7 @@ run_wrapper_flow() {
 
   echo "== Flow: $name =="
   openclaw_test_state_create "switch-${name}" empty
+  use_default_service_identity
   export USER="testuser"
   mkdir -p "$HOME/.local/bin"
   local wrapper="$HOME/.local/bin/openclaw-wrapper"
