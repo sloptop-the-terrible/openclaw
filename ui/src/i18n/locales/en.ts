@@ -2013,15 +2013,20 @@ export const en: TranslationMap = {
       more: "More sign-in options",
     },
     prepare: {
-      title: "Set up a local model",
-      intro:
-        "OpenClaw checks the local service, confirms tool support, and helps prepare a compatible model.",
-      button: "Set up / Download model",
+      title: "Run a model locally",
+      intro: "Use a local model service, or run a private GGUF model directly inside this Gateway.",
       ollamaButton: "Check & set up",
       ollamaLabel: "Ollama",
       ollamaHint: "Connect to the Ollama service on this Gateway and prepare a tools-capable model",
-      llamaCppLabel: "Local model (llama.cpp)",
-      llamaCppHint: "Download an approximately 5.0 GB local model; requires 16 GB RAM",
+      llamaCppLabel: "llama.cpp",
+      llamaCppHint:
+        "Run a private GGUF model inside OpenClaw. No separate model server or API key.",
+      llamaCppModel: "Gemma 4 E4B",
+      llamaCppDownload: "About 5 GB download",
+      llamaCppMemory: "16 GB+ RAM",
+      llamaCppButton: "Install & verify",
+      llamaCppNotReady:
+        "llama.cpp did not produce a usable local model. Review the setup result, then retry.",
     },
     manual: {
       title: "Connect with an API key or token",
@@ -2065,6 +2070,8 @@ export const en: TranslationMap = {
       prepareDialogLabel: "Local model setup",
       title: "Sign in with a provider",
       prepareTitle: "Set up a local model",
+      llamaCppTitle: "Set up llama.cpp",
+      llamaCppSubtitle: "Install the local runtime, download the model, then verify a real reply.",
       starting: "Starting provider sign-in…",
       prepareStarting: "Starting local model setup…",
       checking: "Checking your model setup…",

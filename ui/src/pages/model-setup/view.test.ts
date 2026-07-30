@@ -182,7 +182,7 @@ describe("renderModelSetup", () => {
     expect(text(container)).toContain("Found, but needs attention");
     expect(text(container)).toContain("OpenClaw could not confirm a usable login");
     expect(text(container)).toContain("Sign in with a provider");
-    expect(text(container)).toContain("Set up a local model");
+    expect(text(container)).toContain("Run a model locally");
     expect(text(container)).toContain("Connect with an API key or token");
     expect(
       container.querySelector('[data-manual-provider="openai"][data-selected]'),
@@ -496,7 +496,12 @@ describe("renderModelSetup", () => {
       '[data-prepare-choice="llama-cpp"] button',
     );
     expect(ollama?.textContent).toContain("Check & set up");
-    expect(llamaCpp).not.toBeNull();
+    expect(llamaCpp?.textContent).toContain("Install & verify");
+    const llamaCppRow = container.querySelector('[data-prepare-choice="llama-cpp"]');
+    expect(llamaCppRow?.querySelector('[data-provider-icon="llamacpp"]')).not.toBeNull();
+    expect(text(llamaCppRow!)).toContain("Gemma 4 E4B");
+    expect(text(llamaCppRow!)).toContain("About 5 GB download");
+    expect(text(llamaCppRow!)).toContain("16 GB+ RAM");
     ollama?.click();
     expect(onStartPrepare).toHaveBeenCalledWith(expect.objectContaining({ id: "ollama" }));
 
@@ -991,7 +996,7 @@ describe("renderModelSetup", () => {
     expect(text(confirm)).toContain("No");
   });
 
-  it.each(["multiselect", "progress", "action"] as const)("renders the %s wizard step", (type) => {
+  it.each(["multiselect", "action"] as const)("renders the %s wizard step", (type) => {
     const container = wizardStep({
       id: type,
       type,
@@ -1002,5 +1007,57 @@ describe("renderModelSetup", () => {
     });
     expect(text(container)).toContain(`${type} message`);
     expect(text(container)).toContain("Continue");
+  });
+
+  it("renders gateway progress without an answer control", () => {
+    const container = wizardStep({
+      id: "download",
+      type: "progress",
+      message: "Downloading Gemma 4 E4B… 42%",
+      executor: "gateway",
+    });
+
+    expect(text(container)).toContain("Downloading Gemma 4 E4B… 42%");
+    expect(container.querySelector('[role="status"]')).not.toBeNull();
+    expect(container.querySelector(".wizard-step__spinner")).not.toBeNull();
+    expect(container.querySelector(".wizard-step__progress button")).toBeNull();
+  });
+
+  it("keeps a Continue action for client progress", () => {
+    const container = wizardStep({
+      id: "client-progress",
+      type: "progress",
+      message: "Waiting for the local client",
+      executor: "client",
+    });
+
+    expect(text(container)).toContain("Waiting for the local client");
+    expect(text(container)).toContain("Continue");
+    expect(container.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it("brands the llama.cpp setup wizard", () => {
+    const container = mount(
+      props({
+        wizardMode: "prepare",
+        wizard: {
+          phase: "step",
+          authChoice: "llama-cpp",
+          step: {
+            id: "consent",
+            type: "confirm",
+            message: "Download the model?",
+          },
+          busy: false,
+          validationError: null,
+        },
+      }),
+    );
+
+    expect(text(container)).toContain("Set up llama.cpp");
+    expect(text(container)).toContain(
+      "Install the local runtime, download the model, then verify a real reply.",
+    );
+    expect(container.querySelector('[data-provider-icon="llamacpp"]')).not.toBeNull();
   });
 });

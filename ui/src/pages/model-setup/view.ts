@@ -415,23 +415,32 @@ function renderPrepare(props: ModelSetupViewProps, result: SystemAgentSetupDetec
       <div class="model-setup__rows">
         ${options.map(
           (option) => html`
-            <div class="model-setup__row" data-prepare-choice=${option.id}>
+            <div
+              class=${`model-setup__row model-setup__prepare-row${option.featured ? " model-setup__prepare-row--featured" : ""}`}
+              data-prepare-choice=${option.id}
+            >
               <div class="model-setup__provider-copy">
                 ${renderProviderIcon(props, option)}
-                <div>
+                <div class="model-setup__prepare-copy">
                   <strong>${option.label}</strong>
                   ${option.hint ? html`<div class="muted">${option.hint}</div>` : nothing}
+                  ${option.facts?.length
+                    ? html`<div class="model-setup__prepare-facts">
+                        ${option.facts.map(
+                          (fact) => html`<span class="model-setup__prepare-fact">${fact}</span>`,
+                        )}
+                      </div>`
+                    : nothing}
                 </div>
               </div>
               <button
                 type="button"
-                class="btn"
+                class=${option.featured ? "btn primary" : "btn"}
                 ?disabled=${props.actionsDisabled}
                 @click=${() => props.onStartPrepare(option)}
               >
-                ${option.id === "ollama"
-                  ? t("modelSetup.prepare.ollamaButton")
-                  : t("modelSetup.prepare.button")}
+                ${option.featured ? icons.zap : nothing}
+                <span>${option.buttonLabel}</span>
               </button>
             </div>
           `,

@@ -413,6 +413,167 @@ describeControlUiE2e("Control UI Model Setup mocked Gateway E2E", () => {
     }
   });
 
+  it("downloads, verifies, and opens chat with llama.cpp", async () => {
+    const context = await browser.newContext({
+      colorScheme: "dark",
+      locale: "en-US",
+      serviceWorkers: "block",
+      viewport: { height: 900, width: 1280 },
+    });
+    const page = await context.newPage();
+    const initialDetection = {
+      candidates: [],
+      manualProviders: [],
+      workspace: "/tmp/openclaw-e2e",
+      setupComplete: false,
+    };
+    const modelRef = "llama-cpp/gemma-4-e4b-it-q4_k_m";
+    const gateway = await installMockGateway(page, {
+      featureMethods: [
+        "chat.metadata",
+        "chat.startup",
+        "openclaw.setup.detect",
+        "openclaw.setup.activate",
+        "openclaw.setup.prepare.start",
+        "wizard.next",
+      ],
+      methodResponses: {
+        "openclaw.setup.detect": initialDetection,
+        "openclaw.setup.prepare.start": {
+          sessionId: "llama-cpp-prepare-session",
+          done: false,
+          status: "running",
+        },
+        "openclaw.setup.activate": {
+          ok: true,
+          modelRef,
+          latencyMs: 731,
+          lines: ["Model ready"],
+        },
+        "wizard.next": {
+          sequence: [
+            {
+              done: false,
+              status: "running",
+              step: {
+                id: "llama-cpp-consent",
+                type: "confirm",
+                message:
+                  "Download Gemma 4 E4B IT Q4_K_M (about 5.0 GB) for local llama.cpp inference?",
+                initialValue: false,
+              },
+            },
+            {
+              done: false,
+              status: "running",
+              step: {
+                id: "llama-cpp-download-20",
+                type: "progress",
+                message: "Downloading Gemma 4 E4B… 20% (1.0/5.0 GB, 38 MB/s)",
+                executor: "gateway",
+              },
+            },
+            {
+              done: false,
+              status: "running",
+              step: {
+                id: "llama-cpp-download-100",
+                type: "progress",
+                message: "Gemma 4 E4B model downloaded",
+                executor: "gateway",
+              },
+            },
+            { done: true, status: "done" },
+          ],
+        },
+      },
+    });
+
+    try {
+      const response = await page.goto(`${server.baseUrl}settings/model-setup`);
+      expect(response?.status()).toBe(200);
+      const llamaCppRow = page.locator('[data-prepare-choice="llama-cpp"]');
+      await llamaCppRow.getByRole("button", { name: "Install & verify" }).waitFor();
+      await expect
+        .poll(() => llamaCppRow.locator('[data-provider-icon="llamacpp"]').count())
+        .toBe(1);
+      await expect.poll(() => llamaCppRow.textContent()).toContain("Gemma 4 E4B");
+      await expect.poll(() => llamaCppRow.textContent()).toContain("About 5 GB download");
+      await expect.poll(() => llamaCppRow.textContent()).toContain("16 GB+ RAM");
+
+      if (artifactDir) {
+        await mkdir(artifactDir, { recursive: true });
+        await page.screenshot({
+          animations: "disabled",
+          fullPage: true,
+          path: path.join(artifactDir, "llama-cpp-offer-desktop.png"),
+        });
+      }
+
+      await llamaCppRow.getByRole("button", { name: "Install & verify" }).click();
+      const start = await gateway.waitForRequest("openclaw.setup.prepare.start");
+      expect(start.params).toMatchObject({ authChoice: "llama-cpp" });
+      await page.getByRole("heading", { name: "Set up llama.cpp" }).waitFor();
+      await page.getByText("Download Gemma 4 E4B IT Q4_K_M").waitFor();
+
+      if (artifactDir) {
+        await page.screenshot({
+          animations: "disabled",
+          fullPage: true,
+          path: path.join(artifactDir, "llama-cpp-confirm-desktop.png"),
+        });
+      }
+
+      await gateway.setMethodResponse("openclaw.setup.detect", {
+        ...initialDetection,
+        candidates: [
+          {
+            kind: "provider-auto:llama-cpp",
+            brandId: "llama-cpp",
+            label: "llama.cpp",
+            detail: "Gemma 4 E4B downloaded",
+            modelRef,
+            recommended: true,
+            credentials: true,
+          },
+        ],
+      });
+      await page.getByRole("button", { name: "Yes" }).click();
+      await page.getByRole("heading", { name: "Connection verified" }).waitFor();
+      await expect
+        .poll(() => page.locator(".model-setup-success").textContent())
+        .toContain(modelRef);
+      await expect
+        .poll(() => page.locator(".model-setup-success").textContent())
+        .toContain("Verified in 731 ms");
+
+      const activate = await gateway.waitForRequest("openclaw.setup.activate");
+      expect(activate.params).toEqual({
+        kind: "provider-auto:llama-cpp",
+        modelRef,
+      });
+
+      if (artifactDir) {
+        await page.screenshot({
+          animations: "disabled",
+          fullPage: true,
+          path: path.join(artifactDir, "llama-cpp-ready-desktop.png"),
+        });
+        await page.setViewportSize({ height: 844, width: 390 });
+        await page.screenshot({
+          animations: "disabled",
+          fullPage: true,
+          path: path.join(artifactDir, "llama-cpp-ready-mobile.png"),
+        });
+      }
+
+      await page.getByRole("button", { name: "Start chatting" }).click();
+      await expect.poll(() => new URL(page.url()).pathname).toBe("/chat");
+    } finally {
+      await context.close();
+    }
+  });
+
   it("turns an unverifiable Gemini CLI login into direct recovery actions", async () => {
     const context = await browser.newContext({
       colorScheme: "dark",

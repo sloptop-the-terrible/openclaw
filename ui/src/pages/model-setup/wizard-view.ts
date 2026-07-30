@@ -1,4 +1,5 @@
 import { html, nothing, type TemplateResult } from "lit";
+import { renderProviderBrandIcon } from "../../components/provider-icon.ts";
 import { renderWizardStepControls } from "../../components/wizard-step-controls.ts";
 import { t } from "../../i18n/index.ts";
 import "../../components/modal-dialog.ts";
@@ -20,6 +21,8 @@ export function renderModelSetupWizard(props: WizardViewProps): TemplateResult |
   if (props.state.phase === "idle") {
     return nothing;
   }
+  const authChoice = "authChoice" in props.state ? props.state.authChoice : null;
+  const isLlamaCppSetup = props.mode === "prepare" && authChoice === "llama-cpp";
   const canCancel =
     props.state.phase === "starting" ||
     props.state.phase === "step" ||
@@ -35,15 +38,23 @@ export function renderModelSetupWizard(props: WizardViewProps): TemplateResult |
     >
       <div class="model-setup-wizard">
         <div class="model-setup-wizard__header">
+          ${isLlamaCppSetup
+            ? renderProviderBrandIcon("llama-cpp", {
+                className: "model-setup-wizard__provider-icon",
+              })
+            : nothing}
           <h2>
             ${props.state.phase === "step" && props.state.step.title
               ? props.state.step.title
-              : t(
-                  props.mode === "prepare"
-                    ? "modelSetup.wizard.prepareTitle"
-                    : "modelSetup.wizard.title",
-                )}
+              : isLlamaCppSetup
+                ? t("modelSetup.wizard.llamaCppTitle")
+                : t(
+                    props.mode === "prepare"
+                      ? "modelSetup.wizard.prepareTitle"
+                      : "modelSetup.wizard.title",
+                  )}
           </h2>
+          ${isLlamaCppSetup ? html`<p>${t("modelSetup.wizard.llamaCppSubtitle")}</p>` : nothing}
         </div>
         <div class="model-setup-wizard__body">
           ${props.state.phase === "starting"
