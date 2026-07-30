@@ -2,6 +2,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { SYSTEM_PROMPT_CACHE_BOUNDARY } from "@openclaw/ai/internal/shared";
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createReplyOperation, replyRunRegistry } from "../auto-reply/reply/reply-run-registry.js";
@@ -2544,6 +2545,280 @@ describe("runCliAgent spawn path", () => {
     expect(first.text).toBe("one");
     expect(second.text).toBe("two");
     expect(supervisorSpawnMock).toHaveBeenCalledOnce();
+  });
+
+  it("refreshes a reused Claude live session when only dynamic prompt context changes", async () => {
+    let userTurn = 0;
+    let controlRequest = 0;
+    const live = mockClaudeLiveRun(supervisorSpawnMock, {
+      onWrite: ({ data, emit }) => {
+        const parsed = JSON.parse(data) as {
+          type: string;
+          request_id?: string;
+          request?: {
+            subtype?: string;
+            model?: string;
+            system_prompt?: string;
+          };
+        };
+        if (parsed.type === "control_request") {
+          controlRequest += 1;
+          if (controlRequest === 1) {
+            expect(parsed.request).toEqual({
+              subtype: "set_model",
+              model: "sonnet",
+              system_prompt: "",
+            });
+            emit([
+              {
+                type: "control_response",
+                response: {
+                  subtype: "error",
+                  request_id: parsed.request_id,
+                  error: "set_model: system_prompt must be a non-empty string when present",
+                },
+              },
+            ]);
+            return;
+          }
+          expect(parsed.request).toEqual({
+            subtype: "set_model",
+            model: "sonnet",
+            system_prompt: "Stable instructions\nSecond-turn metadata",
+          });
+          emit([
+            {
+              type: "control_response",
+              response: {
+                subtype: "success",
+                request_id: parsed.request_id,
+              },
+            },
+          ]);
+          return;
+        }
+        userTurn += 1;
+        emit([
+          { type: "system", subtype: "init", session_id: "live-dynamic-prompt" },
+          {
+            type: "result",
+            session_id: "live-dynamic-prompt",
+            result: userTurn === 1 ? "one" : "two",
+          },
+        ]);
+      },
+    });
+    const backend = {
+      resumeArgs: ["-p", "--output-format", "stream-json", "--resume={sessionId}"],
+      liveSession: "claude-stdio" as const,
+      systemPromptWhen: "always" as const,
+    };
+
+    const first = await executePreparedCliRun(
+      buildPreparedCliRunContext({
+        backend,
+        prompt: "first",
+        systemPrompt: `Stable instructions${SYSTEM_PROMPT_CACHE_BOUNDARY}First-turn metadata`,
+      }),
+    );
+    const second = await executePreparedCliRun(
+      buildPreparedCliRunContext({
+        backend,
+        prompt: "second",
+        systemPrompt: `Stable instructions${SYSTEM_PROMPT_CACHE_BOUNDARY}Second-turn metadata`,
+      }),
+      "live-dynamic-prompt",
+    );
+
+    expect(first.text).toBe("one");
+    expect(second.text).toBe("two");
+    expect(supervisorSpawnMock).toHaveBeenCalledOnce();
+    expect(live.writes.map((entry) => JSON.parse(entry).type)).toEqual([
+      "user",
+      "control_request",
+      "control_request",
+      "user",
+    ]);
+  });
+
+  it("restarts Claude live sessions when stable prompt instructions change", async () => {
+    mockClaudeLiveRun(supervisorSpawnMock, {
+      events: [
+        { type: "system", subtype: "init", session_id: "live-stable-prompt" },
+        { type: "result", session_id: "live-stable-prompt", result: "one" },
+      ],
+      cancelable: true,
+    });
+    mockClaudeLiveRun(supervisorSpawnMock, {
+      events: [
+        { type: "system", subtype: "init", session_id: "live-stable-prompt" },
+        { type: "result", session_id: "live-stable-prompt", result: "two" },
+      ],
+    });
+    const backend = {
+      resumeArgs: ["-p", "--output-format", "stream-json", "--resume={sessionId}"],
+      liveSession: "claude-stdio" as const,
+      systemPromptWhen: "always" as const,
+    };
+
+    await executePreparedCliRun(
+      buildPreparedCliRunContext({
+        backend,
+        systemPrompt: `First instructions${SYSTEM_PROMPT_CACHE_BOUNDARY}Metadata`,
+      }),
+    );
+    const second = await executePreparedCliRun(
+      buildPreparedCliRunContext({
+        backend,
+        systemPrompt: `Second instructions${SYSTEM_PROMPT_CACHE_BOUNDARY}Metadata`,
+      }),
+      "live-stable-prompt",
+    );
+
+    expect(second.text).toBe("two");
+    expect(supervisorSpawnMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    {
+      name: "ignores the system_prompt field",
+      responses: [{ subtype: "success" }],
+    },
+    {
+      name: "rejects the live refresh",
+      responses: [
+        {
+          subtype: "error",
+          error: "set_model: system_prompt must be a non-empty string when present",
+        },
+        { subtype: "error", error: "unsupported" },
+      ],
+    },
+  ])("restarts when Claude $name", async ({ responses }) => {
+    let controlRequest = 0;
+    mockClaudeLiveRun(supervisorSpawnMock, {
+      cancelable: true,
+      onWrite: ({ data, emit }) => {
+        const parsed = JSON.parse(data) as { type: string; request_id?: string };
+        if (parsed.type === "control_request") {
+          const response = responses[controlRequest];
+          controlRequest += 1;
+          emit([
+            {
+              type: "control_response",
+              response: {
+                request_id: parsed.request_id,
+                ...response,
+              },
+            },
+          ]);
+          return;
+        }
+        emit([
+          { type: "system", subtype: "init", session_id: "live-rejected-prompt" },
+          { type: "result", session_id: "live-rejected-prompt", result: "one" },
+        ]);
+      },
+    });
+    mockClaudeLiveRun(supervisorSpawnMock, {
+      events: [
+        { type: "system", subtype: "init", session_id: "live-rejected-prompt" },
+        { type: "result", session_id: "live-rejected-prompt", result: "two" },
+      ],
+    });
+    const backend = {
+      resumeArgs: ["-p", "--output-format", "stream-json", "--resume={sessionId}"],
+      liveSession: "claude-stdio" as const,
+      systemPromptWhen: "always" as const,
+    };
+
+    await executePreparedCliRun(
+      buildPreparedCliRunContext({
+        backend,
+        systemPrompt: `Stable instructions${SYSTEM_PROMPT_CACHE_BOUNDARY}First metadata`,
+      }),
+    );
+    const second = await executePreparedCliRun(
+      buildPreparedCliRunContext({
+        backend,
+        systemPrompt: `Stable instructions${SYSTEM_PROMPT_CACHE_BOUNDARY}Second metadata`,
+      }),
+      "live-rejected-prompt",
+    );
+
+    expect(second.text).toBe("two");
+    expect(supervisorSpawnMock).toHaveBeenCalledTimes(2);
+    expect(controlRequest).toBe(responses.length);
+  });
+
+  it("restarts on marker-free prompt changes instead of weakening prompt identity", async () => {
+    mockClaudeLiveRun(supervisorSpawnMock, {
+      events: [
+        { type: "system", subtype: "init", session_id: "live-marker-free" },
+        { type: "result", session_id: "live-marker-free", result: "one" },
+      ],
+      cancelable: true,
+    });
+    mockClaudeLiveRun(supervisorSpawnMock, {
+      events: [
+        { type: "system", subtype: "init", session_id: "live-marker-free" },
+        { type: "result", session_id: "live-marker-free", result: "two" },
+      ],
+    });
+    const backend = {
+      resumeArgs: ["-p", "--output-format", "stream-json", "--resume={sessionId}"],
+      liveSession: "claude-stdio" as const,
+      systemPromptWhen: "always" as const,
+    };
+
+    await executePreparedCliRun(
+      buildPreparedCliRunContext({ backend, systemPrompt: "First complete prompt" }),
+    );
+    const second = await executePreparedCliRun(
+      buildPreparedCliRunContext({ backend, systemPrompt: "Second complete prompt" }),
+      "live-marker-free",
+    );
+
+    expect(second.text).toBe("two");
+    expect(supervisorSpawnMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps legacy first-only system prompts on full-prompt restart identity", async () => {
+    mockClaudeLiveRun(supervisorSpawnMock, {
+      events: [
+        { type: "system", subtype: "init", session_id: "live-first-only-prompt" },
+        { type: "result", session_id: "live-first-only-prompt", result: "one" },
+      ],
+      cancelable: true,
+    });
+    mockClaudeLiveRun(supervisorSpawnMock, {
+      events: [
+        { type: "system", subtype: "init", session_id: "live-first-only-prompt" },
+        { type: "result", session_id: "live-first-only-prompt", result: "two" },
+      ],
+    });
+    const backend = {
+      resumeArgs: ["-p", "--output-format", "stream-json", "--resume={sessionId}"],
+      liveSession: "claude-stdio" as const,
+      systemPromptWhen: "first" as const,
+    };
+
+    await executePreparedCliRun(
+      buildPreparedCliRunContext({
+        backend,
+        systemPrompt: `Stable instructions${SYSTEM_PROMPT_CACHE_BOUNDARY}First metadata`,
+      }),
+    );
+    const second = await executePreparedCliRun(
+      buildPreparedCliRunContext({
+        backend,
+        systemPrompt: `Stable instructions${SYSTEM_PROMPT_CACHE_BOUNDARY}Second metadata`,
+      }),
+      "live-first-only-prompt",
+    );
+
+    expect(second.text).toBe("two");
+    expect(supervisorSpawnMock).toHaveBeenCalledTimes(2);
   });
 
   it("serializes concurrent Claude live session creation for the same key", async () => {
